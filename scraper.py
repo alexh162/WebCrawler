@@ -1,5 +1,6 @@
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
+from bs4 import BeautifulSoup
 
 def scraper(url, resp):
     links = extract_next_links(url, resp)
@@ -15,7 +16,30 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
-    return list()
+    soup = BeautifulSoup(web_response.text, "html.parser")
+
+    # Find all anchor tags (links) in the page
+    links = soup.find_all("a", href=True)
+
+    scraped_urls = []
+    for link in links:
+        href = link["href"]
+        # Remove fragment part from URL
+        href = urljoin(url, urlparse(href)._replace(fragment='').geturl())
+        
+        # Check if the URL is valid and within the specified domains and paths
+        if is_valid(href) and any(
+            domain in href
+            for domain in [
+                "ics.uci.edu",
+                "cs.uci.edu",
+                "informatics.uci.edu",
+                "stat.uci.edu",
+            ]
+        ):
+            scraped_urls.append(href)
+
+    return scraped_urls
 
 def is_valid(url):
     # Decide whether to crawl this url or not. 
