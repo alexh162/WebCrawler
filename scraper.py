@@ -1,5 +1,5 @@
 import re
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, urlunparse
 from bs4 import BeautifulSoup
 import nltk
 import pickle
@@ -10,44 +10,35 @@ from collections import Counter
 nltk.download('stopwords')
 stop_words = set(stopwords.words('english'))
 
-# File extensions to exclude
-file_extensions_to_exclude = ['.pdf', '.zip', '.exe', '.jpg', '.png', '.gif', '.apk', '.war', '.txt', 'action=login', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.mp3', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.swf', '.tar', '.gz', '.tar.gz', '.rar', '.7z', '.mpg', '.mpeg', '.avi', '.flv', '.webm', '.mkv', '.mp3', '.wav', '.ogg', '.aac', '.flac', '.odc']
-
 # Keep track of the visited URLs
 visited_urls = set()
 
 # From assignment 1
 def tokenize(page_text_str):
     allowed_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
-    tokens = []
+    total_word_count = 0
+    word_frequency = {}
     current_token = ''
     
     for char in page_text_str:   # Iterate through every character in the file
         if char in allowed_chars:  # Append char to token if it's alphanumeric
             current_token += char.lower()   # Convert to lowercase to treat tokens as case-insensitive
         else:   # Non-alphanumeric characters separate the tokens
-            if current_token:
-                tokens.append(current_token)
-                current_token = ''
+            if current_token and current_token not in stop_words and len(current_token) > 1:
+                total_word_count = total_word_count + 1
+                if current_token in word_frequency:
+                    word_frequency[current_token] += 1
+                else:
+                    word_frequency[current_token] = 1
+            current_token = ''
     
-    if current_token:   # Add the last token if it's not empty
-        tokens.append(current_token)
+    if current_token and current_token not in stop_words and len(current_token) > 1:   # Add the last token if it's not empty
+        total_word_count = total_word_count + 1
+        if current_token in word_frequency:
+            word_frequency[current_token] += 1
+        else:
+            word_frequency[current_token] = 1
 
-    return tokens
-
-# Turn list of words to map with frequency
-def computeWordFrequencies(tokens_list):
-    word_frequency = {}
-    total_word_count = 0
-    
-    for token in tokens_list:
-        # Add word to map if it doesn't exist and increment count if it does
-        if token not in stop_words and len(token) > 1:
-            total_word_count = total_word_count + 1
-            if token in word_frequency:
-                word_frequency[token] += 1
-            else:
-                word_frequency[token] = 1
     return (total_word_count, word_frequency)
 
 # Merge two maps
@@ -85,11 +76,12 @@ def extract_next_links(url, resp):
     visited_urls = fetchVisited()
     parsed_url = urlparse(url)
     parsed_no_fragment = parsed_url.scheme + '://' + parsed_url.netloc + parsed_url.path + parsed_url.query
-    visited_urls.add(parsed_no_fragment)
 
     # Check if valid and not visited
     if resp.status != 200 or parsed_no_fragment in visited_urls or resp.raw_response == None or len(resp.raw_response.content) < 100:
         return list()
+
+    update_statistics(url, resp.raw_response.content)
 
     # Find all links in the page
     soup = BeautifulSoup(resp.raw_response.content, "html.parser")
@@ -98,16 +90,20 @@ def extract_next_links(url, resp):
     scraped_urls = list()
     for link in links:
         href = link["href"]
+        href = urljoin(url, href)
         parsed_href = urlparse(href)
+        # if not parsed_href.netloc:
+        #     href = urljoin(resp.url, link["href"])
+        #     parsed_href = urlparse(href)
 
         # Remove query and fragment from URL
-        href_without_query = urljoin(href, parsed_href._replace(query='').geturl())
-        href_without_fragment = urljoin(href_without_query, parsed_href._replace(fragment='').geturl())
+        stripped_url = urlunparse((parsed_href.scheme, parsed_href.netloc, parsed_href.path, '', '', ''))
         
         # Check if the URL is valid
-        if is_valid(href_without_fragment):
-            scraped_urls.append(href_without_fragment)
+        if is_valid(stripped_url) and stripped_url not in visited_urls and parsed_href.path.count('/') < 10:
+            scraped_urls.append(stripped_url)
     
+    visited_urls.add(parsed_no_fragment)
     with open('visited.pkl', 'wb') as file:
         pickle.dump(visited_urls, file)
 
@@ -121,10 +117,7 @@ def is_valid(url):
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
             return False
-        
-        if parsed.path.lower().endswith(tuple(file_extensions_to_exclude)):
-            return False
-        
+
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
             + r"|png|tiff?|mid|mp2|mp3|mp4"
@@ -133,14 +126,16 @@ def is_valid(url):
             + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
+            + r"|jpg|apk|war|txt|flv|7z|mpg|webm|aac|flac|odc|img|asp|php|cmd|bat|vbs|tif|svg|webp|odt|ods|bam|ppsx"
             + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower()) and re.match(
             r'^(\w*.)(ics.uci.edu|cs.uci.edu|stat.uci.edu|informatics.uci.edu)$', parsed.netloc) and not re.match(
-            r"/files/pdf/|login.php", parsed.path.lower())
+            r"/files/pdf/|login.php|/login/|action=login", parsed.path.lower())
     except TypeError:
         print ("TypeError for ", parsed)
         raise
 
 def update_statistics(url, raw_text):
+    # Turn raw text to readable text
     soup = BeautifulSoup(raw_text, "html.parser")
     page_text = soup.get_text()
 
@@ -162,13 +157,12 @@ def update_statistics(url, raw_text):
 
     # Update common words counter
     tokens = tokenize(page_text)
-    token_count_tuple = computeWordFrequencies(tokens)
     if "word_dict" not in existing_stats:
         existing_stats["word_dict"] = {}
-    existing_stats["word_dict"] = merge_maps(token_count_tuple[1], existing_stats["word_dict"])
+    existing_stats["word_dict"] = merge_maps(tokens[1], existing_stats["word_dict"])
 
-    # Update longest_page_words
-    page_words = token_count_tuple[0]
+    # Update page with most words and its URL
+    page_words = tokens[0]
     if page_words > existing_stats.get('longest_page_words', 0):
         existing_stats['longest_page_words'] = page_words
         existing_stats['longest_page_url'] = url
@@ -180,9 +174,5 @@ def update_statistics(url, raw_text):
 def scraper(url, resp):
     links = extract_next_links(url, resp)
     valid_links = [link for link in links if is_valid(link)]
-
-    # Extract text from the page
-    if resp.status == 200 and resp.raw_response != None:
-        update_statistics(url, resp.raw_response.content)
     
     return valid_links

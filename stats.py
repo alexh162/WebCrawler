@@ -5,16 +5,17 @@ def print_stats():
     try:
         with open("visited.pkl", 'rb') as file:
             visited_urls = pickle.load(file)
-            print(f"Number of unique pages: {len(visited_urls)}")
-            print()
+            print(f"How many unique pages did you find?\n{len(visited_urls)}\n")
+            
         with open("stats.pkl", 'rb') as file:
             existing_stats = pickle.load(file)
 
-            unique_pages = existing_stats.get('unique_pages_map', {})
+            unique_pages = existing_stats.get('subdomain_map', {})
 
             print("Unique Pages Map:")
             if unique_pages:
-                for word, count in unique_pages.items():
+                for word in sorted(unique_pages.keys()):
+                    count = unique_pages[word]
                     print(f"{word}, {count}")
             print()
 
