@@ -92,9 +92,6 @@ def extract_next_links(url, resp):
         href = link["href"]
         href = urljoin(url, href)
         parsed_href = urlparse(href)
-        # if not parsed_href.netloc:
-        #     href = urljoin(resp.url, link["href"])
-        #     parsed_href = urlparse(href)
 
         # Remove query and fragment from URL
         stripped_url = urlunparse((parsed_href.scheme, parsed_href.netloc, parsed_href.path, '', '', ''))
