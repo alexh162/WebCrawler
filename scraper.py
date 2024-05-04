@@ -5,6 +5,7 @@ import nltk
 import pickle
 from nltk.corpus import stopwords
 from collections import Counter
+from simhash import Simhash
 
 # Download and fetch stopwords list
 nltk.download('stopwords')
@@ -62,6 +63,34 @@ def fetchVisited():
         pass
     return v
 
+# Load content of last 10 pages to check for similarity
+def load_last_10_visited():
+    try:
+        with open('last10.pkl', 'rb') as file:
+            last_10_visited = pickle.load(file)
+    except FileNotFoundError:
+        last_10_visited = []
+    return last_10_visited
+
+# Update content of last 10 pages
+def update_last_10_visited(current_content):
+    last_10_visited = load_last_10_visited()
+    last_10_visited.append(current_content)
+    if len(last_10_visited) > 10:
+        last_10_visited = last_10_visited[-10:]
+    with open('last10.pkl', 'wb') as file:
+        pickle.dump(last_10_visited, file)
+
+def calculate_similarity(content1, content2):
+    # Calculate Simhash for the content strings
+    simhash1 = Simhash(content1)
+    simhash2 = Simhash(content2)
+    
+    # Calculate the distance and similarity
+    distance = simhash1.distance(simhash2)
+    similarity = 1 - (distance / 64.0)
+    return similarity
+
 def extract_next_links(url, resp):
     # url: the URL that was used to get the page
     # resp.url: the actual url of the page
@@ -74,17 +103,35 @@ def extract_next_links(url, resp):
 
     # Fetch visited URLs from pkl file
     visited_urls = fetchVisited()
+
+    # Remove query and fragment from URL
     parsed_url = urlparse(url)
     parsed_no_fragment = parsed_url.scheme + '://' + parsed_url.netloc + parsed_url.path + parsed_url.query
 
     # Check if valid and not visited
-    if resp.status != 200 or parsed_no_fragment in visited_urls or resp.raw_response == None or len(resp.raw_response.content) < 100:
+    if resp.status != 200 or parsed_no_fragment in visited_urls or resp.raw_response == None or len(resp.raw_response.content) < 150:
         return list()
 
-    update_statistics(url, resp.raw_response.content)
+    # Turn raw text to readable text
+    soup = BeautifulSoup(resp.raw_response.content, "html.parser")
+    page_text = soup.get_text()
+    is_similar = False
+
+    # Load last 10 visited content
+    last_10_visited = load_last_10_visited()
+    
+    # Check for similarity between last 10 pages
+    for prev_content in last_10_visited:
+        if calculate_similarity(page_text, prev_content) > .95:
+            is_similar = True
+    
+    if is_similar:
+        return list()
+
+    update_statistics(url, page_text)
+    update_last_10_visited(page_text)
 
     # Find all links in the page
-    soup = BeautifulSoup(resp.raw_response.content, "html.parser")
     links = soup.find_all("a", href=True)
 
     scraped_urls = list()
@@ -131,11 +178,7 @@ def is_valid(url):
         print ("TypeError for ", parsed)
         raise
 
-def update_statistics(url, raw_text):
-    # Turn raw text to readable text
-    soup = BeautifulSoup(raw_text, "html.parser")
-    page_text = soup.get_text()
-
+def update_statistics(url, page_text):
     # Load existing statistics from the file
     existing_stats = {}
     try:
